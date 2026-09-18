@@ -1,0 +1,5 @@
+{
+  "num_buckets": 4,
+  "bob_moves": [[0], [1], [2], [3], [0, 1], [1, 2]],
+  "description": "Convex: 4 buckets"
+}

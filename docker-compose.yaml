@@ -1,0 +1,74 @@
+---
+volumes:
+  pg_data:
+
+services:
+  db:
+    image: postgres:18
+    volumes:
+    - pg_data:/var/lib/postgresql
+    env_file:
+      - ./.env
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready
+        - -d
+        - main
+        - -U
+        - postgres
+    ports:
+      - 5432:5432
+
+  cache:
+    image: valkey/valkey:9
+    healthcheck:
+      test:
+        - CMD
+        - valkey-cli
+        - ping
+      timeout: 10s
+      retries: 3
+      start_interval: 15s
+      start_period: 15s
+    ports:
+      - 6379:6379
+
+  adminer:
+    image: adminer
+    ports:
+      - 8080:8080
+    depends_on:
+      - db
+
+  manager:
+    build: .
+    command: python manager.py
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    env_file:
+      - ./.env
+    volumes:
+      - ./positions/general-6-buckets.json:/app/position.json
+
+  worker:
+    build: .
+    command: python worker.py
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    env_file:
+      - ./.env
+    deploy:
+      replicas: 8
+
+  cli:
+    build: .
+    tty: true
+    env_file:
+      - ./.env
