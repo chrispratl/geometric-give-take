@@ -20,7 +20,7 @@ def get_connection() -> Valkey:
 
 class JobType(str, Enum):
     AUTOPILOT_ASSIGNMENT = "autopilot_assignment"
-    EQUIVALENT_POSITIONS_COMPUTATION = "equivalent_positions_computation"
+    EQUIVALENT_VARIANTS_COMPUTATION = "equivalent_variants_computation"
     DISTANCES_COMPUTER = "distances_computer"
     ASSIGNMENT_COMPUTER = "assignment_computer"
     ASSIGNMENT_GENERATOR = "assignment_generator"
@@ -34,7 +34,7 @@ class JobOrder:
     in order to be processed
     """
 
-    position_id: int
+    variant_id: int
     id: str
     job_type: JobType
     data: dict

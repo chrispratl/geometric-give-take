@@ -52,7 +52,7 @@ services:
     env_file:
       - ./.env
     volumes:
-      - ./positions/general-6-buckets.json:/app/position.json
+      - ./variants/convex-5-buckets.json:/app/variant.json
 
   worker:
     build: .

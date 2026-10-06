@@ -8,14 +8,15 @@ import os
 from collections.abc import Iterator
 from functools import lru_cache
 
-import game_position
 import psycopg2
 from psycopg2.extensions import cursor
+
+import game_variant
 
 # ruff: disable[S608]
 
 METADATA_TABLENAME = "metadata"
-POSITION_TABLENAME_PREFIX = "positions_"
+VARIANT_TABLENAME_PREFIX = "variants_"
 
 
 def get_connection() -> cursor:
@@ -60,7 +61,7 @@ def setup_metadata_table(crs: cursor) -> None:
 
         representation json not null,
 
-        equivalent_positions json,
+        equivalent_variants json,
         bucket_distances json,
 
         autopilot_generation_done boolean not null,
@@ -74,30 +75,30 @@ def setup_metadata_table(crs: cursor) -> None:
     crs.execute(stmt)
 
 
-def get_game_position_id(position: game_position.GamePosition, crs: cursor) -> int | None:
+def get_game_variant_id(variant: game_variant.GameVariant, crs: cursor) -> int | None:
     """
-    Iterate all available game positions and check if any of them
-    is equal to this game position. If found, yield the ID
-    of the game position.
+    Iterate all available game variants and check if any of them
+    is equal to this game variant. If found, yield the ID
+    of the game variant.
     """
 
     crs.execute(f"select id, representation from {METADATA_TABLENAME}")
 
     for potential_id, representation in crs.fetchall():
-        other_position = game_position.GamePosition.from_dict(representation)
-        if position == other_position:
+        other_variant = game_variant.GameVariant.from_dict(representation)
+        if variant == other_variant:
             return potential_id
 
     return None
 
 
-def add_game_position(
-    position: game_position.GamePosition,
+def add_game_variant(
+    variant: game_variant.GameVariant,
     description: str | None,
     crs: cursor,
 ) -> int:
     """
-    Add a game position to the database.
+    Add a game variant to the database.
     """
 
     crs.execute(
@@ -113,17 +114,17 @@ def add_game_position(
             VALUES (%s, %s, %s, %s, %s)
             returning id
         """,
-        (position.num_buckets, json.dumps(position.to_dict()), False, False, description),
+        (variant.num_buckets, json.dumps(variant.to_dict()), False, False, description),
     )
 
     ret = crs.fetchone()
     if ret is None:
-        raise RuntimeError("Something failed when setting up a new position!")
+        raise RuntimeError("Something failed when setting up a new variant!")
     return ret[0]
 
 
-def metadata_update_position_metadata(
-    position_id: int,
+def metadata_update_variant_metadata(
+    variant_id: int,
     data: dict,
     crs: cursor,
 ) -> None:
@@ -138,7 +139,7 @@ def metadata_update_position_metadata(
             FROM metadata
             WHERE id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
     data_raw = crs.fetchone()
 
@@ -154,15 +155,15 @@ def metadata_update_position_metadata(
         SET metadata = %s
         WHERE id = %s
         """,
-        (json.dumps(data_db), position_id),
+        (json.dumps(data_db), variant_id),
     )
 
 
 @lru_cache(maxsize=2)
-def get_game_position(game_position_id: int, crs: cursor) -> game_position.GamePosition | None:
+def get_game_variant(game_variant_id: int, crs: cursor) -> game_variant.GameVariant | None:
     """
-    Return the game position that has the given ID
-    Note: The game position does not change, so in order to
+    Return the game variant that has the given ID
+    Note: The game variant does not change, so in order to
     decrease the number of requests to the database, this method
     can be cached. Storing up to two elements should be enough
     in general.
@@ -170,39 +171,39 @@ def get_game_position(game_position_id: int, crs: cursor) -> game_position.GameP
 
     crs.execute(
         f"SELECT representation from {METADATA_TABLENAME} where ID = %s",
-        (game_position_id,),
+        (game_variant_id,),
     )
 
     raw = crs.fetchone()
     if raw is None:
         return None
 
-    position = game_position.GamePosition.from_dict(raw[0])
-    position.canonicalize()
-    return position
+    variant = game_variant.GameVariant.from_dict(raw[0])
+    variant.canonicalize()
+    return variant
 
 
 @lru_cache(maxsize=2)
-def metadata_get_bucket_distances(position_id: int, crs: cursor) -> dict[str, dict[str, int]]:
+def metadata_get_bucket_distances(variant_id: int, crs: cursor) -> dict[str, dict[str, int]]:
     crs.execute(
         f"""
             select bucket_distances
             from {METADATA_TABLENAME}
             where id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
     ret = crs.fetchone()
 
     if ret is None:
-        raise RuntimeError("Equivalent positions were not (yet) set!")
+        raise RuntimeError("Equivalent variants were not (yet) set!")
 
     return ret[0]
 
 
 def metadata_set_bucket_distances(
-    position_id: int,
+    variant_id: int,
     bucket_distances: dict[int, dict[int, int]],
     crs: cursor,
 ) -> None:
@@ -213,49 +214,49 @@ def metadata_set_bucket_distances(
         SET bucket_distances = %s
         WHERE id = %s
         """,
-        (json.dumps(bucket_distances), position_id),
+        (json.dumps(bucket_distances), variant_id),
     )
 
 
 @lru_cache(maxsize=2)
-def metadata_get_equivalent_positions(position_id: int, crs: cursor) -> list[list[int]]:
+def metadata_get_equivalent_variants(variant_id: int, crs: cursor) -> list[list[int]]:
     crs.execute(
         f"""
-            select equivalent_positions
+            select equivalent_variants
             from {METADATA_TABLENAME}
             where id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
     ret = crs.fetchone()
 
     if ret is None:
-        raise RuntimeError("Equivalent positions were not (yet) set!")
+        raise RuntimeError("Equivalent variants were not (yet) set!")
 
     return ret[0]
 
 
-def metadata_set_equivalent_positions(
-    position_id: int,
-    equivalent_positions: list[tuple[int, ...]],
+def metadata_set_equivalent_variants(
+    variant_id: int,
+    equivalent_variants: list[tuple[int, ...]],
     crs: cursor,
 ) -> None:
 
     crs.execute(
         f"""
         UPDATE {METADATA_TABLENAME}
-        SET equivalent_positions = %s
+        SET equivalent_variants = %s
         WHERE id = %s
         """,
-        (json.dumps(equivalent_positions), position_id),
+        (json.dumps(equivalent_variants), variant_id),
     )
 
 
 @lru_cache(maxsize=2)
-def metadata_get_min_autopilot_number(position_id: int, crs: cursor) -> int | None:
+def metadata_get_min_autopilot_number(variant_id: int, crs: cursor) -> int | None:
     """
-    Return the minimum Autopilot number for a game position.
+    Return the minimum Autopilot number for a game variant.
     """
 
     crs.execute(
@@ -264,7 +265,7 @@ def metadata_get_min_autopilot_number(position_id: int, crs: cursor) -> int | No
         from {METADATA_TABLENAME}
         where id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
     ret = crs.fetchone()
@@ -274,9 +275,9 @@ def metadata_get_min_autopilot_number(position_id: int, crs: cursor) -> int | No
     return ret[0]
 
 
-def metadata_set_min_autopilot_number(position_id: int, min_autopilot: int, crs: cursor) -> None:
+def metadata_set_min_autopilot_number(variant_id: int, min_autopilot: int, crs: cursor) -> None:
     """
-    Set the minimum Autopilot number for a game position.
+    Set the minimum Autopilot number for a game variant.
     """
 
     crs.execute(
@@ -287,13 +288,13 @@ def metadata_set_min_autopilot_number(position_id: int, min_autopilot: int, crs:
         """,
         (
             min_autopilot,
-            position_id,
+            variant_id,
         ),
     )
 
 
 def metadata_set_autopilot_generation_checkpoint(
-    position_id: int,
+    variant_id: int,
     checkpoint: tuple[bool, ...],
     crs: cursor,
 ) -> None:
@@ -307,12 +308,12 @@ def metadata_set_autopilot_generation_checkpoint(
         SET autopilot_generation_checkpoint = %s
         WHERE id = %s
         """,
-        (json.dumps(checkpoint), position_id),
+        (json.dumps(checkpoint), variant_id),
     )
 
 
 def metadata_get_autopilot_generation_checkpoint(
-    position_id: int,
+    variant_id: int,
     crs: cursor,
 ) -> tuple[bool, ...] | None:
     """
@@ -325,7 +326,7 @@ def metadata_get_autopilot_generation_checkpoint(
         FROM metadata
         WHERE id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
     data_raw = crs.fetchone()
@@ -336,7 +337,7 @@ def metadata_get_autopilot_generation_checkpoint(
     return tuple(data_raw[0])
 
 
-def metadata_get_autopilot_generations_finished(position_id: int, crs: cursor) -> bool:
+def metadata_get_autopilot_generations_finished(variant_id: int, crs: cursor) -> bool:
     """
     Check if the Autopilot generation was already finished
     """
@@ -347,7 +348,7 @@ def metadata_get_autopilot_generations_finished(position_id: int, crs: cursor) -
             FROM metadata
             WHERE id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
     data_raw = crs.fetchone()
@@ -357,7 +358,7 @@ def metadata_get_autopilot_generations_finished(position_id: int, crs: cursor) -
     return data_raw[0] is True
 
 
-def metadata_set_autopilot_generations_finished(position_id: int, crs: cursor) -> None:
+def metadata_set_autopilot_generations_finished(variant_id: int, crs: cursor) -> None:
     """
     Indicate the Autopilot generation as finished.
     """
@@ -370,12 +371,12 @@ def metadata_set_autopilot_generations_finished(position_id: int, crs: cursor) -
                 autopilot_generation_checkpoint = null
             WHERE id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
 
 def metadata_set_assignment_generation_checkpoint(
-    position_id: int,
+    variant_id: int,
     checkpoint: dict,
     crs: cursor,
 ) -> None:
@@ -389,12 +390,12 @@ def metadata_set_assignment_generation_checkpoint(
         SET assignment_generation_checkpoint = %s
         WHERE id = %s
         """,
-        (json.dumps(checkpoint), position_id),
+        (json.dumps(checkpoint), variant_id),
     )
 
 
 def metadata_get_assignment_generation_checkpoint(
-    position_id: int,
+    variant_id: int,
     crs: cursor,
 ) -> dict | None:
     """
@@ -407,7 +408,7 @@ def metadata_get_assignment_generation_checkpoint(
         FROM metadata
         WHERE id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
     data_raw = crs.fetchone()
@@ -418,7 +419,7 @@ def metadata_get_assignment_generation_checkpoint(
     return data_raw[0]
 
 
-def metadata_get_assignment_generations_finished(position_id: int, crs: cursor) -> bool:
+def metadata_get_assignment_generations_finished(variant_id: int, crs: cursor) -> bool:
     """
     Check if the assignment generation was already finished
     """
@@ -429,7 +430,7 @@ def metadata_get_assignment_generations_finished(position_id: int, crs: cursor) 
             FROM metadata
             WHERE id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
     data_raw = crs.fetchone()
@@ -439,7 +440,7 @@ def metadata_get_assignment_generations_finished(position_id: int, crs: cursor) 
     return data_raw[0] is True
 
 
-def metadata_set_assignment_generations_finished(position_id: int, crs: cursor) -> None:
+def metadata_set_assignment_generations_finished(variant_id: int, crs: cursor) -> None:
     """
     Indicate the assignment generation as finished.
     """
@@ -452,49 +453,49 @@ def metadata_set_assignment_generations_finished(position_id: int, crs: cursor) 
                 assignment_generation_checkpoint = null
             WHERE id = %s
         """,
-        (position_id,),
+        (variant_id,),
     )
 
 
-#######################
-# Game Position Table #
-#######################
+######################
+# Game Variant Table #
+######################
 
 
-def get_position_tablename(position_id: int) -> str:
+def get_variant_tablename(variant_id: int) -> str:
     """
-    Get the position data tablename for a given position ID.
-    This is used in multiple positions, and should remain
+    Get the variant data tablename for a given variant ID.
+    This is used in multiple variants, and should remain
     consistent, so the actual name is created in an
     own method.
     """
 
-    return f"{POSITION_TABLENAME_PREFIX}{position_id}"
+    return f"{VARIANT_TABLENAME_PREFIX}{variant_id}"
 
 
-def setup_game_position_table(
+def setup_game_variant_table(
     crs: cursor,
-    position: game_position.GamePosition,
-    position_id: int,
+    variant: game_variant.GameVariant,
+    variant_id: int,
 ) -> None:
     """
-    Create a table for one specific position.
+    Create a table for one specific variant.
     """
 
     columns = ["id SERIAL PRIMARY KEY"]
-    numbers = [f"num{k} INT NOT NULL" for k in range(position.num_buckets)]
+    numbers = [f"num{k} INT NOT NULL" for k in range(variant.num_buckets)]
     columns.extend(numbers)
-    numbers_sorted = [f"sorted{k} INT NOT NULL" for k in range(position.num_buckets)]
+    numbers_sorted = [f"sorted{k} INT NOT NULL" for k in range(variant.num_buckets)]
     columns.extend(numbers_sorted)
 
     columns.append("winner character(5)")
-    columns.append("autopilot_position boolean not null")
+    columns.append("autopilot_variant boolean not null")
     columns.append("metadata json null")
 
     crs.execute(f"""
         CREATE TABLE
         IF NOT EXISTS
-        {get_position_tablename(position_id)}
+        {get_variant_tablename(variant_id)}
         ({", ".join(columns)})
     """)
 
@@ -505,42 +506,42 @@ def setup_game_position_table(
         # Search index on buckets
         crs.execute(f"""
             CREATE INDEX
-            {get_position_tablename(position_id)}_pos_search
+            {get_variant_tablename(variant_id)}_pos_search
             ON
-            {get_position_tablename(position_id)}
-            ({", ".join([f"num{k}" for k in range(position.num_buckets)])})
+            {get_variant_tablename(variant_id)}
+            ({", ".join([f"num{k}" for k in range(variant.num_buckets)])})
         """)
     with contextlib.suppress(psycopg2.errors.DuplicateTable):
         # btree Index on buckets
         crs.execute(f"""
             CREATE INDEX
-            {get_position_tablename(position_id)}_pos_search_btree
+            {get_variant_tablename(variant_id)}_pos_search_btree
             ON
-            {get_position_tablename(position_id)}
-            ({", ".join([f"num{k}" for k in range(position.num_buckets)])})
+            {get_variant_tablename(variant_id)}
+            ({", ".join([f"num{k}" for k in range(variant.num_buckets)])})
         """)
     with contextlib.suppress(psycopg2.errors.DuplicateTable):
         # btree index on sorted buckets
         crs.execute(f"""
             CREATE INDEX
-            {get_position_tablename(position_id)}_sorted_btree
+            {get_variant_tablename(variant_id)}_sorted_btree
             ON
-            {get_position_tablename(position_id)}
-            ({", ".join([f"sorted{k}" for k in range(position.num_buckets)])})
+            {get_variant_tablename(variant_id)}
+            ({", ".join([f"sorted{k}" for k in range(variant.num_buckets)])})
         """)
     with contextlib.suppress(psycopg2.errors.DuplicateTable):
         # Index on Autopilot Information
         crs.execute(f"""
             CREATE INDEX
-            {get_position_tablename(position_id)}_autopilot
+            {get_variant_tablename(variant_id)}_autopilot
             ON
-            {get_position_tablename(position_id)}
-            (autopilot_position)
+            {get_variant_tablename(variant_id)}
+            (autopilot_variant)
         """)
 
 
 def get_assignment_metadata_by_id(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     crs: cursor,
 ) -> tuple[int, str | None, bool, dict] | None:
@@ -550,14 +551,14 @@ def get_assignment_metadata_by_id(
     Returns:
     * Assignment ID
     * Winner
-    * Autopilot position
+    * Autopilot variant
     * Metadata
     """
 
     crs.execute(
         f"""
-            SELECT id, winner, autopilot_position, metadata
-            FROM {get_position_tablename(position_id)}
+            SELECT id, winner, autopilot_variant, metadata
+            FROM {get_variant_tablename(variant_id)}
             WHERE ID = %s
         """,
         (assignment_id,),
@@ -567,8 +568,8 @@ def get_assignment_metadata_by_id(
 
 
 def get_assignment_metadata_by_buckets(
-    position_id: int,
-    assignment: game_position.Assignment,
+    variant_id: int,
+    assignment: game_variant.Assignment,
     crs: cursor,
 ) -> tuple[int, str | None, bool, dict] | None:
     """
@@ -577,13 +578,13 @@ def get_assignment_metadata_by_buckets(
     Returns:
     * Assignment ID
     * Winner
-    * Autopilot position
+    * Autopilot variant
     * Metadata
     """
 
     stmt = f"""
-        SELECT id, winner, autopilot_position, metadata
-        FROM {get_position_tablename(position_id)}
+        SELECT id, winner, autopilot_variant, metadata
+        FROM {get_variant_tablename(variant_id)}
         WHERE
     """
     stmt += " AND ".join([f"num{k} = %s" for k in range(assignment.num_buckets)])
@@ -594,9 +595,9 @@ def get_assignment_metadata_by_buckets(
 
 
 def add_assignment(
-    position_id: int,
-    assignment: game_position.Assignment,
-    autopilot_position: bool,  # noqa: FBT001
+    variant_id: int,
+    assignment: game_variant.Assignment,
+    autopilot_variant: bool,  # noqa: FBT001
     crs: cursor,
 ) -> int:
     """
@@ -608,11 +609,11 @@ def add_assignment(
 
     columns.extend([f"num{k}" for k in range(assignment.num_buckets)])
     columns.extend([f"sorted{k}" for k in range(assignment.num_buckets)])
-    columns.extend(["autopilot_position", "metadata"])
+    columns.extend(["autopilot_variant", "metadata"])
 
     crs.execute(
         f"""
-        INSERT INTO {get_position_tablename(position_id)}
+        INSERT INTO {get_variant_tablename(variant_id)}
         ({", ".join(columns)})
         VALUES ({", ".join(["%s"] * len(columns))})
         RETURNING id
@@ -620,7 +621,7 @@ def add_assignment(
         (
             *assignment.bucket_content,
             *sorted(assignment.bucket_content),
-            autopilot_position,
+            autopilot_variant,
             "{}",
         ),
     )
@@ -634,7 +635,7 @@ def add_assignment(
 
 
 def update_assignment_metadata(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     data: dict,
     crs: cursor,
@@ -647,7 +648,7 @@ def update_assignment_metadata(
     crs.execute(
         f"""
             SELECT metadata
-            FROM {get_position_tablename(position_id)}
+            FROM {get_variant_tablename(variant_id)}
             WHERE id = %s
         """,
         (assignment_id,),
@@ -662,7 +663,7 @@ def update_assignment_metadata(
 
     crs.execute(
         f"""
-        UPDATE {get_position_tablename(position_id)}
+        UPDATE {get_variant_tablename(variant_id)}
         SET metadata = %s
         WHERE id = %s
         """,
@@ -671,7 +672,7 @@ def update_assignment_metadata(
 
 
 def get_assignment_metadata(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     crs: cursor,
 ) -> dict | None:
@@ -682,7 +683,7 @@ def get_assignment_metadata(
     crs.execute(
         f"""
             SELECT metadata
-            FROM {get_position_tablename(position_id)}
+            FROM {get_variant_tablename(variant_id)}
             WHERE ID = %s
             """,
         (assignment_id,),
@@ -697,9 +698,9 @@ def get_assignment_metadata(
 
 
 def update_assignment_winner(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
-    winner: game_position.KnownWinner,
+    winner: game_variant.KnownWinner,
     crs: cursor,
 ) -> None:
     """
@@ -709,7 +710,7 @@ def update_assignment_winner(
 
     crs.execute(
         f"""
-        UPDATE {get_position_tablename(position_id)}
+        UPDATE {get_variant_tablename(variant_id)}
         SET winner = %s
         WHERE id = %s
         """,
@@ -718,10 +719,10 @@ def update_assignment_winner(
 
 
 def get_assignment_winner(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     crs: cursor,
-) -> game_position.KnownWinner | None:
+) -> game_variant.KnownWinner | None:
     """
     Returns the winner of an assignment if known.
     """
@@ -729,7 +730,7 @@ def get_assignment_winner(
     crs.execute(
         f"""
         SELECT winner
-        FROM {get_position_tablename(position_id)}
+        FROM {get_variant_tablename(variant_id)}
         WHERE ID = %s
         """,
         (assignment_id,),
@@ -744,7 +745,7 @@ def get_assignment_winner(
 
 
 def get_assignment_by_id(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     num_buckets: int,
     crs: cursor,
@@ -759,7 +760,7 @@ def get_assignment_by_id(
     crs.execute(
         f"""
         SELECT {", ".join(columns)}
-        FROM {get_position_tablename(position_id)}
+        FROM {get_variant_tablename(variant_id)}
         WHERE ID = %s
         """,
         (assignment_id,),
@@ -774,7 +775,7 @@ def get_assignment_by_id(
 
 
 def get_assignment_id_by_bucket_contents(
-    position_id: int,
+    variant_id: int,
     bucket_contents: list[int],
     crs: cursor,
 ) -> int | None:
@@ -787,7 +788,7 @@ def get_assignment_id_by_bucket_contents(
     crs.execute(
         f"""
         SELECT id
-        FROM {get_position_tablename(position_id)}
+        FROM {get_variant_tablename(variant_id)}
         WHERE {" AND ".join(number_search)}
         """,
         bucket_contents,
@@ -802,13 +803,13 @@ def get_assignment_id_by_bucket_contents(
 
 
 def find_potential_dominated_autopilot_win(
-    position_id: int,
+    variant_id: int,
     bucket_contents: list[int],
     crs: cursor,
 ) -> Iterator[tuple]:
     """
     Yield assignments that are Autopilot
-    positions and that may be dominated
+    variants and that may be dominated
     by the given assignment.
     """
 
@@ -816,8 +817,8 @@ def find_potential_dominated_autopilot_win(
     numbers_sorted = [f"sorted{k} <= %s" for k in range(len(bucket_contents))]
     stmt = f"""
     SELECT id, {", ".join(numbers)}
-    FROM {get_position_tablename(position_id)}
-    WHERE autopilot_position = true
+    FROM {get_variant_tablename(variant_id)}
+    WHERE autopilot_variant = true
         AND {" AND ".join(numbers_sorted)}
     """
 
@@ -827,14 +828,14 @@ def find_potential_dominated_autopilot_win(
         yield ret
 
 
-def assignments_with_unknown_winner(position_id: int, crs: cursor) -> Iterator[int]:
+def assignments_with_unknown_winner(variant_id: int, crs: cursor) -> Iterator[int]:
     """
     Yield assignment IDs that have no winner set
     """
 
     crs.execute(f"""
         SELECT id
-        FROM {get_position_tablename(position_id)}
+        FROM {get_variant_tablename(variant_id)}
         WHERE winner is null
     """)
 

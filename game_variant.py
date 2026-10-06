@@ -1,5 +1,5 @@
 """
-Representation of a Line, a Game Position
+Representation of a Line, a Game Variant
 and an Assignment. Additionally, a set of helper
 methods on them.
 """
@@ -72,7 +72,7 @@ class BobMove:
         if self.n is None:
             raise RuntimeError("Unable to determine number of buckets!")
 
-        for element in self.move: # noqa: SIM110
+        for element in self.move:  # noqa: SIM110
             if not 0 <= element <= self.n - 1:
                 return False
 
@@ -181,9 +181,9 @@ class BobMove:
         return num in self.move
 
 
-class GamePosition:
+class GameVariant:
     """
-    Game Position Base Class.
+    Game Varinant Base Class.
     """
 
     def __init__(self, num_buckets: int, bob_moves: list[BobMove]) -> None:
@@ -199,7 +199,7 @@ class GamePosition:
 
     def validate(self) -> bool:
         """
-        Validate that the game position is valid.
+        Validate that the game variant is valid.
         Currently, this mainly means: Every defined
         Bob move has to be an actually possible
         move.
@@ -219,7 +219,7 @@ class GamePosition:
 
     def canonicalize(self) -> None:
         """
-        Canonicalize the game position.
+        Canonicalize the game variant.
         Will only happen once to prevent
         too much double computing.
 
@@ -233,7 +233,7 @@ class GamePosition:
             return
 
         if not self.validate():
-            raise ValueError("Unable to normalize; the game position is not valid!")
+            raise ValueError("Unable to normalize; the game variant is not valid!")
 
         new_moves: list[BobMove] = []
 
@@ -261,7 +261,7 @@ class GamePosition:
     @classmethod
     def from_dict(cls, data: dict) -> Self:
         """
-        Parse a position from dict.
+        Parse a variant from dict.
         """
         return cls(
             num_buckets=data["num_buckets"],
@@ -295,19 +295,19 @@ class GamePosition:
         return True
 
 
-def permutate_position(position: GamePosition, permutation: tuple[int, ...]) -> GamePosition:
+def permutate_variant(variant: GameVariant, permutation: tuple[int, ...]) -> GameVariant:
     """
-    Create a permutation of the given Game Position
+    Create a permutation of the given Game Variant
     by replacing all pebbles with the one given
     in the permutation.
     """
 
-    if sorted(permutation) != list(range(position.num_buckets)):
+    if sorted(permutation) != list(range(variant.num_buckets)):
         raise ValueError("Incorrect input for permutation!")
 
-    ret = GamePosition(num_buckets=position.num_buckets, bob_moves=[])
+    ret = GameVariant(num_buckets=variant.num_buckets, bob_moves=[])
 
-    for bob_move in position.bob_moves:
+    for bob_move in variant.bob_moves:
         new_move = BobMove(move=[permutation[i] for i in bob_move.move])
         ret.bob_moves.append(new_move)
 
@@ -322,36 +322,36 @@ class Assignment:
 
     def __init__(
         self,
-        game_position: GamePosition,
+        game_variant: GameVariant,
         bucket_content: list[int] | None = None,
     ) -> None:
-        self.game_position = game_position
+        self.game_variant = game_variant
 
-        if bucket_content is not None and len(bucket_content) != game_position.num_buckets:
+        if bucket_content is not None and len(bucket_content) != game_variant.num_buckets:
             raise ValueError("Incorrect input for bucket_content!")
 
-        self.bucket_content: list[int] = bucket_content or [0] * self.game_position.num_buckets
+        self.bucket_content: list[int] = bucket_content or [0] * self.game_variant.num_buckets
 
     @property
     def num_buckets(self) -> int:
         """
-        Number of buckets - Just inherit from game_position
+        Number of buckets - Just inherit from game_variant
         """
-        return self.game_position.num_buckets
+        return self.game_variant.num_buckets
 
     @property
     def bob_moves(self) -> list[BobMove]:
         """
-        Bob Positions - Just inherit from game_position
+        Bob Moves - Just inherit from game_variant
         """
-        return self.game_position.bob_moves
+        return self.game_variant.bob_moves
 
     def __repr__(self) -> str:
         return str(self.bucket_content)
 
 
 def find_separator(
-    game_position: GamePosition,
+    game_variant: GameVariant,
     left: list[int],
     right: list[int],
 ) -> None | BobMove:
@@ -366,15 +366,15 @@ def find_separator(
     if (
         min(left) < 0
         or min(right) < 0
-        or max(left) >= game_position.num_buckets
-        or max(right) >= game_position.num_buckets
+        or max(left) >= game_variant.num_buckets
+        or max(right) >= game_variant.num_buckets
     ):
         raise ValueError("Buckets needs to be in the correct range!")
 
     if set(left).intersection(set(right)):
         raise ValueError("The two sides are not disjoint!")
 
-    for move in game_position.bob_moves:
+    for move in game_variant.bob_moves:
         # left and right actually different?
         if move.buckets_on_same_side(left[0], right[0]):
             continue
@@ -395,25 +395,25 @@ def find_separator(
 def permutate_assignment(assignment: Assignment, permutation: tuple[int, ...]) -> Assignment:
     """
     Create a permutation of the given assignment
-    by replacing the base game position, and
+    by replacing the base game variant, and
     moving the correct number of pebbles.
     """
 
     new = Assignment(
-        game_position=permutate_position(assignment.game_position, permutation),
+        game_variant=permutate_variant(assignment.game_variant, permutation),
     )
     new.bucket_content = [assignment.bucket_content[i] for i in permutation]
 
     return new
 
 
-def count_number_of_lines_between(game_position: GamePosition, a: int, b: int) -> int:
+def count_number_of_lines_between(game_variant: GameVariant, a: int, b: int) -> int:
     """
     Count the number of lines between two buckets.
     """
 
     cnt = 0
-    for bob_move in game_position.bob_moves:
+    for bob_move in game_variant.bob_moves:
         if not bob_move.buckets_on_same_side(a, b):
             cnt += 1
 

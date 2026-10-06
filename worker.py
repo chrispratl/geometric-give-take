@@ -3,7 +3,7 @@ import itertools
 import cache
 import db
 import decision_algorithms
-import game_position
+import game_variant
 import recursive_computation
 import tools
 
@@ -29,7 +29,7 @@ def send_processing_status(
     )
 
 
-def process_job_equivalent_positions_computation(
+def process_job_equivalent_variants_computation(
     job: cache.JobOrder,
     crs: db.cursor,
     valkey: cache.Valkey,
@@ -38,19 +38,19 @@ def process_job_equivalent_positions_computation(
     print(f"Processing equivalent computation job with ID {job.id}")
     send_processing_status(job, valkey)
 
-    position = tools.get_position_or_fail(job.position_id, crs)
+    variant = tools.get_variant_or_fail(job.variant_id, crs)
     fixed_replacements = job.data["fixed"]
 
-    remaining = [el for el in range(position.num_buckets) if el not in fixed_replacements]
+    remaining = [el for el in range(variant.num_buckets) if el not in fixed_replacements]
 
     for variable_replacement in itertools.permutations(remaining):
         full_replacement = (*fixed_replacements, *variable_replacement)
 
-        new_position = game_position.permutate_position(position, full_replacement)
+        new_variant = game_variant.permutate_variant(variant, full_replacement)
 
-        if new_position == position:
+        if new_variant == variant:
             cache.send_information_to_manager(
-                data={"equivalent_position": full_replacement},
+                data={"equivalent_variant": full_replacement},
                 db=valkey,
             )
 
@@ -68,13 +68,13 @@ def process_job_distances_computer(
     print(f"Processing distance computation job with ID {job.id}")
     send_processing_status(job, valkey)
 
-    position = tools.get_position_or_fail(job.position_id, crs)
+    variant = tools.get_variant_or_fail(job.variant_id, crs)
 
     bucket0, bucket1 = job.data["fixed"]
 
-    for potential_num in range(position.num_buckets - 2, -1, -1):
+    for potential_num in range(variant.num_buckets - 2, -1, -1):
         for possible_path in itertools.permutations(
-            itertools.filterfalse(lambda x: x in job.data["fixed"], range(position.num_buckets)),
+            itertools.filterfalse(lambda x: x in job.data["fixed"], range(variant.num_buckets)),
             potential_num,
         ):
             left = []
@@ -83,7 +83,7 @@ def process_job_distances_computer(
             while right:
                 left.append(right.pop(0))
 
-                move = game_position.find_separator(position, left, right + [bucket1])
+                move = game_variant.find_separator(variant, left, right + [bucket1])
 
                 if move is None:
                     break
@@ -113,43 +113,43 @@ def process_job_autopilot_assignment_generator(
     print(f"Processing Autopilot assignment job {job.id}")
     send_processing_status(job, valkey)
 
-    position = tools.get_position_or_fail(job.position_id, crs)
-    base_assignment = game_position.Assignment(position)
-    base_assignment.bucket_content = [1] * position.num_buckets
+    variant = tools.get_variant_or_fail(job.variant_id, crs)
+    base_assignment = game_variant.Assignment(variant)
+    base_assignment.bucket_content = [1] * variant.num_buckets
 
     for bob_move_id, add in enumerate(job.data["fixed"]):
-        bob_move = position.bob_moves[bob_move_id]
-        for i in range(position.num_buckets):
+        bob_move = variant.bob_moves[bob_move_id]
+        for i in range(variant.num_buckets):
             if i in bob_move.move and add or i not in bob_move.move and not add:
                 base_assignment.bucket_content[i] += 1
 
-    equivalent_positions = db.metadata_get_equivalent_positions(job.position_id, crs)
+    equivalent_variants = db.metadata_get_equivalent_variants(job.variant_id, crs)
 
     fixed = len(job.data["fixed"])
     for combination in itertools.product(
         [True, False],
         repeat=len(base_assignment.bob_moves) - fixed,
     ):
-        assignment = game_position.Assignment(position)
+        assignment = game_variant.Assignment(variant)
         assignment.bucket_content = base_assignment.bucket_content.copy()
         for bob_move_id, add in enumerate(combination):
             bob_move = base_assignment.bob_moves[fixed + bob_move_id]
-            for i in range(position.num_buckets):
+            for i in range(variant.num_buckets):
                 if i in bob_move.move and add or i not in bob_move.move and not add:
                     assignment.bucket_content[i] += 1
 
-        assignment = tools.normalize_assignment(assignment, equivalent_positions)
-        if db.get_assignment_metadata_by_buckets(job.position_id, assignment, crs) is None:
+        assignment = tools.normalize_assignment(assignment, equivalent_variants)
+        if db.get_assignment_metadata_by_buckets(job.variant_id, assignment, crs) is None:
             assignment_id = db.add_assignment(
-                job.position_id,
+                job.variant_id,
                 assignment,
-                autopilot_position=True,
+                autopilot_variant=True,
                 crs=crs,
             )
             db.update_assignment_winner(
-                job.position_id,
+                job.variant_id,
                 assignment_id,
-                game_position.KnownWinner.ALICE,
+                game_variant.KnownWinner.ALICE,
                 crs,
             )
 
@@ -170,29 +170,29 @@ def process_job_assignment_generator(
     print(f"Processing assignment generator job {job.id}")
     send_processing_status(job, valkey)
 
-    position = tools.get_position_or_fail(job.position_id, crs)
+    variant = tools.get_variant_or_fail(job.variant_id, crs)
 
-    equivalent_positions = db.metadata_get_equivalent_positions(job.position_id, crs)
+    equivalent_variants = db.metadata_get_equivalent_variants(job.variant_id, crs)
 
     first_buckets = job.data["fixed"]
     remaining_pebbles = job.data["total_num_pebbles"] - sum(first_buckets)
 
     for distribution in tools.distribute(
         remaining_pebbles,
-        position.num_buckets - len(first_buckets),
+        variant.num_buckets - len(first_buckets),
     ):
-        assignment = game_position.Assignment(position, [*first_buckets, *distribution])
-        assignment = tools.normalize_assignment(assignment, equivalent_positions)
+        assignment = game_variant.Assignment(variant, [*first_buckets, *distribution])
+        assignment = tools.normalize_assignment(assignment, equivalent_variants)
 
-        ret = db.get_assignment_metadata_by_buckets(job.position_id, assignment, crs)
+        ret = db.get_assignment_metadata_by_buckets(job.variant_id, assignment, crs)
         known_winner = None
 
         if ret is None:
             print("Generating new assignment")
             assignment_id = db.add_assignment(
-                position_id=job.position_id,
+                variant_id=job.variant_id,
                 assignment=assignment,
-                autopilot_position=False,
+                autopilot_variant=False,
                 crs=crs,
             )
         else:
@@ -206,7 +206,7 @@ def process_job_assignment_generator(
                     status=cache.JobProcessStatus.PREPARED_COMPUTING_JOB,
                     data={
                         "assignment-id": assignment_id,
-                        "position-id": job.position_id,
+                        "variant-id": job.variant_id,
                     },
                 ),
                 valkey,
@@ -228,15 +228,15 @@ def process_job_assignment_computer(
     print(f"Processign assignment computing job {job.id}")
     send_processing_status(job, valkey)
 
-    # Fetch game position
-    position = tools.get_position_or_fail(job.position_id, crs)
+    # Fetch game variant
+    variant = tools.get_variant_or_fail(job.variant_id, crs)
 
     # Fetch assignment metadata
     assignment_id = job.data["assignment-id"]
-    assignment_metadata_raw = db.get_assignment_metadata_by_id(job.position_id, assignment_id, crs)
+    assignment_metadata_raw = db.get_assignment_metadata_by_id(job.variant_id, assignment_id, crs)
     if assignment_metadata_raw is None:
         raise RuntimeError(
-            f"Failed to fetch metadata for assignment {job.position_id}/{assignment_id}!",
+            f"Failed to fetch metadata for assignment {job.variant_id}/{assignment_id}!",
         )
     _, winner, _, assignment_metadata = assignment_metadata_raw
 
@@ -247,22 +247,22 @@ def process_job_assignment_computer(
 
     # Fetch assignment
     assignment = tools.get_assignment_or_fail(
-        job.position_id,
+        job.variant_id,
         assignment_id,
         crs,
-        position=position,
+        variant=variant,
     )
 
     min_autopilot_pebbles = db.metadata_get_min_autopilot_number(
-        position_id=job.position_id,
+        variant_id=job.variant_id,
         crs=crs,
     )
-    equivalent_positions = db.metadata_get_equivalent_positions(
-        position_id=job.position_id,
+    equivalent_variants = db.metadata_get_equivalent_variants(
+        variant_id=job.variant_id,
         crs=crs,
     )
     bucket_distances = db.metadata_get_bucket_distances(
-        position_id=job.position_id,
+        variant_id=job.variant_id,
         crs=crs,
     )
 
@@ -330,9 +330,9 @@ def process_job_assignment_computer(
             decision_algorithms.autopilot_dominating,
             {
                 "assignment": assignment,
-                "position_id": job.position_id,
+                "variant_id": job.variant_id,
                 "crs": crs,
-                "position_equivalences": equivalent_positions,
+                "variant_equivalences": equivalent_variants,
             },
             {"alice-win": "autopilot-dominating"},
         ),
@@ -344,13 +344,13 @@ def process_job_assignment_computer(
             assignment_metadata.update(metadata_reasoning)
 
             db.update_assignment_metadata(
-                position_id=job.position_id,
+                variant_id=job.variant_id,
                 assignment_id=assignment_id,
                 data=assignment_metadata,
                 crs=crs,
             )
             db.update_assignment_winner(
-                position_id=job.position_id,
+                variant_id=job.variant_id,
                 assignment_id=assignment_id,
                 winner=winner,
                 crs=crs,
@@ -373,11 +373,11 @@ def process_job_recursive_computation(
     """
 
     assignment_id = job.data["assignment-id"]
-    print(f"Processing recursive computation job on assignment {job.position_id}/{assignment_id}")
+    print(f"Processing recursive computation job on assignment {job.variant_id}/{assignment_id}")
     send_processing_status(job, valkey)
 
     rc = recursive_computation.RecursiveComputer(
-        position_id=job.position_id,
+        variant_id=job.variant_id,
         assignment_id=assignment_id,
         crs=crs,
         interactive=False,
@@ -387,9 +387,9 @@ def process_job_recursive_computation(
     send_processing_status(job, valkey)
 
     if winner is not None:
-        db.update_assignment_winner(job.position_id, assignment_id, winner, crs)
+        db.update_assignment_winner(job.variant_id, assignment_id, winner, crs)
         db.update_assignment_metadata(
-            job.position_id,
+            job.variant_id,
             assignment_id,
             {f"{winner.value}_win": "recursive"},
             crs,
@@ -406,8 +406,8 @@ def main() -> None:
     while True:
         job = cache.fetch_job(valkey)
 
-        if job.job_type == cache.JobType.EQUIVALENT_POSITIONS_COMPUTATION:
-            process_job_equivalent_positions_computation(job, crs, valkey)
+        if job.job_type == cache.JobType.EQUIVALENT_VARIANTS_COMPUTATION:
+            process_job_equivalent_variants_computation(job, crs, valkey)
         elif job.job_type == cache.JobType.DISTANCES_COMPUTER:
             process_job_distances_computer(job, crs, valkey)
         elif job.job_type == cache.JobType.AUTOPILOT_ASSIGNMENT:

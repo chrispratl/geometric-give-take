@@ -1,33 +1,34 @@
 import contextlib
 import uuid
 
+import tabulate
+
 import cache
 import db
-import game_position
+import game_variant
 import recursive_computation
-import tabulate
 import tools
 
 _crs = db.get_connection()
 _valkey = cache.get_connection()
 
 
-def get_assignment_by_id(position_id: int, assignment_id: int) -> game_position.Assignment:
+def get_assignment_by_id(variant_id: int, assignment_id: int) -> game_variant.Assignment:
     """
     Fetch an assignment from DB.
     """
 
-    assignment = tools.get_assignment_or_fail(position_id, assignment_id, _crs)
+    assignment = tools.get_assignment_or_fail(variant_id, assignment_id, _crs)
 
     print(f"Assignment ID: {assignment_id}")
 
-    winner = db.get_assignment_winner(position_id, assignment_id, _crs)
+    winner = db.get_assignment_winner(variant_id, assignment_id, _crs)
     if winner:
         print(f"Winner is known: {winner}")
     else:
         print("Winner currently unknown")
 
-    metadata = db.get_assignment_metadata(position_id, assignment_id, _crs)
+    metadata = db.get_assignment_metadata(variant_id, assignment_id, _crs)
     if metadata:
         print(f"Assignment Metadata: {metadata}")
 
@@ -36,16 +37,16 @@ def get_assignment_by_id(position_id: int, assignment_id: int) -> game_position.
 
 
 def get_assignment_by_bucket_contents(
-    position_id: int,
+    variant_id: int,
     *bucket_contents: int,
-) -> game_position.Assignment:
+) -> game_variant.Assignment:
     """
     Fetch the assignment from the database that
     has the given bucket contents
     """
 
     assignment_id = db.get_assignment_id_by_bucket_contents(
-        position_id,
+        variant_id,
         list(bucket_contents),
         _crs,
     )
@@ -53,17 +54,17 @@ def get_assignment_by_bucket_contents(
     if assignment_id is None:
         raise RuntimeError("Assignment does not exist!")
 
-    return get_assignment_by_id(position_id, assignment_id)
+    return get_assignment_by_id(variant_id, assignment_id)
 
 
 def add_assignment(
-    position_id: int,
+    variant_id: int,
     bucket_contents: list[int],
     *,
     compute: bool = True,
 ) -> int:
     """
-    Add an assignment for a game position.
+    Add an assignment for a game variant.
 
     * `compute`: If true, add a computation job to
       be picked up by running workers.
@@ -71,37 +72,37 @@ def add_assignment(
     Returns the assignment ID.
     """
 
-    position = tools.get_position_or_fail(position_id, _crs)
+    variant = tools.get_variant_or_fail(variant_id, _crs)
 
-    if len(bucket_contents) != position.num_buckets:
+    if len(bucket_contents) != variant.num_buckets:
         raise ValueError(
-            f"This game position expects {position.num_buckets} "
+            f"This game variant expects {variant.num_buckets} "
             f"buckets, but you provided only {len(bucket_contents)}!",
         )
-    assignment = game_position.Assignment(position, list(bucket_contents))
+    assignment = game_variant.Assignment(variant, list(bucket_contents))
 
-    assignment_metadata = db.get_assignment_metadata_by_buckets(position_id, assignment, _crs)
+    assignment_metadata = db.get_assignment_metadata_by_buckets(variant_id, assignment, _crs)
     if assignment_metadata is not None:
         print("Assignment Metadata:")
         print(assignment_metadata)
         raise RuntimeError("This assignment already exists!")
 
     assignment_id = db.add_assignment(
-        position_id,
+        variant_id,
         assignment,
-        autopilot_position=False,
+        autopilot_variant=False,
         crs=_crs,
     )
     print(f"Assignment created with ID {assignment_id}")
 
     if compute:
-        push_job_assignment_computing(position_id, assignment_id)
+        push_job_assignment_computing(variant_id, assignment_id)
 
     return assignment_id
 
 
 def compute_recursively(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     *,
     max_depth: int = recursive_computation.RECURSION_MAX_DEPTH,
@@ -113,7 +114,7 @@ def compute_recursively(
     """
 
     rc = recursive_computation.RecursiveComputer(
-        position_id=position_id,
+        variant_id=variant_id,
         assignment_id=assignment_id,
         max_depth=max_depth,
         crs=_crs,
@@ -127,7 +128,7 @@ def compute_recursively(
 
 
 def generate_children(
-    position_id: int,
+    variant_id: int,
     rc: recursive_computation.RecursiveComputer,
     depth: int = 1,
 ) -> None:
@@ -138,11 +139,11 @@ def generate_children(
     for i in range(1, depth + 1):
         for child in rc.layer_children[i]:
             with contextlib.suppress(RuntimeError):
-                add_assignment(position_id, child.bucket_content)
+                add_assignment(variant_id, child.bucket_content)
 
 
 def get_trace(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     *,
     with_reasons: bool = True,
@@ -154,7 +155,7 @@ def get_trace(
     """
 
     rc = recursive_computation.RecursiveComputer(
-        position_id,
+        variant_id,
         assignment_id=assignment_id,
         max_depth=max_depth or recursive_computation.RECURSION_MAX_DEPTH,
         crs=_crs,
@@ -164,9 +165,9 @@ def get_trace(
     rows = []
 
     def _enrich_data(
-        position_id: int,
-        assignment: game_position.Assignment,
-        winner: game_position.KnownWinner | None,
+        variant_id: int,
+        assignment: game_variant.Assignment,
+        winner: game_variant.KnownWinner | None,
         prefix: str,
     ) -> dict:
         """
@@ -182,7 +183,7 @@ def get_trace(
         }
 
         assignment_id = db.get_assignment_id_by_bucket_contents(
-            position_id,
+            variant_id,
             assignment.bucket_content,
             _crs,
         )
@@ -191,15 +192,15 @@ def get_trace(
         if assignment_id is None:
             return ret
 
-        assignment_metadata = db.get_assignment_metadata(position_id, assignment_id, _crs)
+        assignment_metadata = db.get_assignment_metadata(variant_id, assignment_id, _crs)
         if winner is None or assignment_metadata is None:
             # No reason to add
             pass
-        elif winner.value == game_position.KnownWinner.BOB:
+        elif winner.value == game_variant.KnownWinner.BOB:
             reason = assignment_metadata.get("bob-win", "unknown")
 
             ret[f"{prefix}_reason"] = reason
-        elif winner.value == game_position.KnownWinner.ALICE:
+        elif winner.value == game_variant.KnownWinner.ALICE:
             reason = assignment_metadata.get("alice-win", "unknown")
 
             ret[f"{prefix}_reason"] = reason
@@ -214,13 +215,13 @@ def get_trace(
             {
                 "bob_move": bob_move,
                 **_enrich_data(
-                    position_id=position_id,
+                    variant_id=variant_id,
                     assignment=left,
                     winner=rc.known_winners.get(left),
                     prefix="left",
                 ),
                 **_enrich_data(
-                    position_id=position_id,
+                    variant_id=variant_id,
                     assignment=right,
                     winner=rc.known_winners.get(right),
                     prefix="right",
@@ -235,7 +236,7 @@ def get_trace(
 
 
 def push_job_assignment_computing(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     *,
     force: bool = True,
@@ -250,7 +251,7 @@ def push_job_assignment_computing(
 
     job = cache.JobOrder(
         id=str(uuid.uuid4()),
-        position_id=position_id,
+        variant_id=variant_id,
         job_type=cache.JobType.ASSIGNMENT_COMPUTER,
         data={"assignment-id": assignment_id, "force": force},
     )
@@ -258,14 +259,14 @@ def push_job_assignment_computing(
     print(f"Computing job created with ID {job.id}")
 
 
-def push_job_recursive_computation(position_id: int, assignment_id: int) -> None:
+def push_job_recursive_computation(variant_id: int, assignment_id: int) -> None:
     """
     Push recursive computation job to the managers to work on.
     """
 
     job = cache.JobOrder(
         id=str(uuid.uuid4()),
-        position_id=position_id,
+        variant_id=variant_id,
         job_type=cache.JobType.RECURSIVE_COMPUTATION,
         data={"assignment-id": assignment_id},
     )

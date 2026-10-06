@@ -1,4 +1,4 @@
-FROM python:3.14.7
+FROM python:3.14.8
 
 COPY requirements.txt /requirements.txt
 RUN pip install -r /requirements.txt
@@ -6,6 +6,6 @@ RUN pip install -r /requirements.txt
 WORKDIR /app
 COPY *.py /app/
 
-COPY positions /app/positions
+COPY variants /app/variants
 
 ENV PYTHONUNBUFFERED=1

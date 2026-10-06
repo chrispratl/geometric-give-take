@@ -5,12 +5,12 @@ Algorithms that may decide a winner on an assignment
 import itertools
 
 import db
-import game_position
+import game_variant
 import tools
-from game_position import KnownWinner
+from game_variant import KnownWinner
 
 
-def bob_simple_wins(assignment: game_position.Assignment) -> tuple[KnownWinner | None, dict]:
+def bob_simple_wins(assignment: game_variant.Assignment) -> tuple[KnownWinner | None, dict]:
     """
     Simple wins: Is there a zero? Are there two
     buckets with only one pebble?
@@ -25,7 +25,7 @@ def bob_simple_wins(assignment: game_position.Assignment) -> tuple[KnownWinner |
     return None, {}
 
 
-def bob_1_2_buckets_win(assignment: game_position.Assignment) -> tuple[KnownWinner | None, dict]:
+def bob_1_2_buckets_win(assignment: game_variant.Assignment) -> tuple[KnownWinner | None, dict]:
     """
     1-2-Buckets win for Bob
     """
@@ -66,7 +66,7 @@ def bob_1_2_buckets_win(assignment: game_position.Assignment) -> tuple[KnownWinn
 
 
 def bob_1d(
-    assignment: game_position.Assignment,
+    assignment: game_variant.Assignment,
     distances: dict[str, dict[str, int]],
 ) -> tuple[KnownWinner | None, dict]:
     """
@@ -85,7 +85,7 @@ def bob_1d(
 
 
 def bob_extended_1d_win(
-    assignment: game_position.Assignment,
+    assignment: game_variant.Assignment,
     distances: dict[str, dict[str, int]],
 ) -> tuple[KnownWinner | None, dict]:
     """
@@ -107,7 +107,7 @@ def bob_extended_1d_win(
 
             # Finally, check if they can be split accordingly
             if (
-                game_position.find_separator(assignment.game_position, [idx0, idx1], [idx2, idx3])
+                game_variant.find_separator(assignment.game_variant, [idx0, idx1], [idx2, idx3])
                 is not None
             ):
                 return KnownWinner.BOB, {
@@ -118,7 +118,7 @@ def bob_extended_1d_win(
 
 
 def bob_monovariant_simple(
-    assignment: game_position.Assignment,
+    assignment: game_variant.Assignment,
     min_autopilot_pebbles: int,
 ) -> tuple[KnownWinner | None, dict]:
     """
@@ -133,7 +133,7 @@ def bob_monovariant_simple(
 
 
 def bob_monovariant_new(
-    assignment: game_position.Assignment,
+    assignment: game_variant.Assignment,
 ) -> tuple[KnownWinner | None, dict]:
     """
     Check if the Bob Monovariant algorithm
@@ -143,7 +143,7 @@ def bob_monovariant_new(
     for i, j in itertools.combinations(range(assignment.num_buckets), r=2):
         if (
             assignment.bucket_content[i] + assignment.bucket_content[j]
-            < game_position.count_number_of_lines_between(assignment.game_position, i, j) + 2
+            < game_variant.count_number_of_lines_between(assignment.game_variant, i, j) + 2
         ):
             return KnownWinner.BOB, {"monovariant-tuple": [i, j]}
 
@@ -151,7 +151,7 @@ def bob_monovariant_new(
 
 
 def bob_extended_monovariant(
-    assignment: game_position.Assignment,
+    assignment: game_variant.Assignment,
 ) -> tuple[KnownWinner | None, dict]:
     """
     Use the extended Monovariant algorithm.
@@ -164,47 +164,47 @@ def bob_extended_monovariant(
 
         if (
             assignment.bucket_content[a] + assignment.bucket_content[b]
-            >= game_position.count_number_of_lines_between(assignment.game_position, a, b) + 4
+            >= game_variant.count_number_of_lines_between(assignment.game_variant, a, b) + 4
         ):
             continue
         if (
             assignment.bucket_content[c] + assignment.bucket_content[d]
-            >= game_position.count_number_of_lines_between(assignment.game_position, c, d) + 4
+            >= game_variant.count_number_of_lines_between(assignment.game_variant, c, d) + 4
         ):
             continue
 
         # Determine if we can actually separate
         # a and b from c and d
 
-        if game_position.find_separator(assignment.game_position, [a, b], [c, d]) is not None:
+        if game_variant.find_separator(assignment.game_variant, [a, b], [c, d]) is not None:
             return KnownWinner.BOB, {"indices": [[a, b], [c, d]]}
 
     return None, {}
 
 
 def autopilot_dominating(
-    assignment: game_position.Assignment,
-    position_id: int,
+    assignment: game_variant.Assignment,
+    variant_id: int,
     crs: db.cursor,
-    position_equivalences: list[list[int]],
+    variant_equivalences: list[list[int]],
 ) -> tuple[KnownWinner | None, dict]:
     """
-    Check if some Autopilot position is being dominated.
+    Check if some Autopilot variant is being dominated.
     """
 
     for potential_dominated in db.find_potential_dominated_autopilot_win(
-        position_id=position_id,
+        variant_id=variant_id,
         bucket_contents=assignment.bucket_content,
         crs=crs,
     ):
-        potential_dominated_assignment = game_position.Assignment(
-            game_position=assignment.game_position,
+        potential_dominated_assignment = game_variant.Assignment(
+            game_variant=assignment.game_variant,
         )
         potential_dominated_assignment.bucket_content = [*potential_dominated[1:]]
 
         for equivalent in tools.yield_permutated_assignments(
             potential_dominated_assignment,
-            position_equivalences,
+            variant_equivalences,
         ):
             if all(
                 left >= right
@@ -215,8 +215,8 @@ def autopilot_dominating(
                 )
             ):
                 return KnownWinner.ALICE, {
-                    "dominated-position-id": potential_dominated[0],
-                    "dominated-autopilot-positioning": equivalent.bucket_content,
+                    "dominated-variant-id": potential_dominated[0],
+                    "dominated-autopilot-varianting": equivalent.bucket_content,
                 }
 
     return None, {}

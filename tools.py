@@ -1,26 +1,26 @@
 from collections.abc import Iterator
 
 import db
-import game_position
+import game_variant
 
 
 def yield_permutated_assignments(
-    assignment: game_position.Assignment,
+    assignment: game_variant.Assignment,
     permutations: list[list[int]],
-) -> Iterator[game_position.Assignment]:
+) -> Iterator[game_variant.Assignment]:
     """
     Yield all assignments that are equivalent to this one.
     """
 
     for permutation in permutations:
-        new = game_position.permutate_assignment(assignment, tuple(permutation))
+        new = game_variant.permutate_assignment(assignment, tuple(permutation))
         yield new
 
 
 def normalize_assignment(
-    assignment: game_position.Assignment,
+    assignment: game_variant.Assignment,
     permutations: list[list[int]],
-) -> game_position.Assignment:
+) -> game_variant.Assignment:
     """
     Given an assignment, return the normalized assignment.
     That's the one that has the lexicographically smallest
@@ -60,23 +60,23 @@ def distribute(num: int, length: int) -> Iterator[list[int]]:
 
 
 def compute_alice_moves(
-    assignment: game_position.Assignment,
-    bob_move: game_position.BobMove,
-    equivalent_positions: list[list[int]],
-) -> tuple[game_position.Assignment, game_position.Assignment]:
+    assignment: game_variant.Assignment,
+    bob_move: game_variant.BobMove,
+    equivalent_variants: list[list[int]],
+) -> tuple[game_variant.Assignment, game_variant.Assignment]:
     """
     Yield the two possible Alice returns when
     Bob chooses the given bob_move.
     The assignments will be normalized, based
-    on the equivalent positions known.
+    on the equivalent variants known.
     """
 
-    alice_left = game_position.Assignment(
-        game_position=assignment.game_position,
+    alice_left = game_variant.Assignment(
+        game_variant=assignment.game_variant,
         bucket_content=list(assignment.bucket_content).copy(),
     )
-    alice_right = game_position.Assignment(
-        game_position=assignment.game_position,
+    alice_right = game_variant.Assignment(
+        game_variant=assignment.game_variant,
         bucket_content=list(assignment.bucket_content).copy(),
     )
 
@@ -90,38 +90,38 @@ def compute_alice_moves(
             alice_left.bucket_content[i] = num - 1
             alice_right.bucket_content[i] = num + 1
 
-    alice_left = normalize_assignment(alice_left, equivalent_positions)
-    alice_right = normalize_assignment(alice_right, equivalent_positions)
+    alice_left = normalize_assignment(alice_left, equivalent_variants)
+    alice_right = normalize_assignment(alice_right, equivalent_variants)
 
     return alice_left, alice_right
 
 
-def get_position_or_fail(position_id: int, crs: db.cursor) -> game_position.GamePosition:
+def get_variant_or_fail(variant_id: int, crs: db.cursor) -> game_variant.GameVariant:
     """
-    Fetch a game position and return it if
+    Fetch a game variant and return it if
     posssible. Otherwise, raise an Exception.
 
     This functionality is used often, so it will be
     canonicalized here.
     """
 
-    position = db.get_game_position(position_id, crs)
+    variant = db.get_game_variant(variant_id, crs)
 
-    if position is None:
+    if variant is None:
         raise RuntimeError(
-            f"Tried to fetch game position with ID {position_id}, but it seems to not exist!",
+            f"Tried to fetch game variant with ID {variant_id}, but it seems to not exist!",
         )
 
-    return position
+    return variant
 
 
 def get_assignment_or_fail(
-    position_id: int,
+    variant_id: int,
     assignment_id: int,
     crs: db.cursor,
     *,
-    position: game_position.GamePosition | None = None,
-) -> game_position.Assignment:
+    variant: game_variant.GameVariant | None = None,
+) -> game_variant.Assignment:
     """
     Fetch a an assignment and return it if
     posssible. Otherwise, raise an Exception.
@@ -130,21 +130,21 @@ def get_assignment_or_fail(
     canonicalized here.
     """
 
-    if position is None:
-        position = get_position_or_fail(position_id, crs)
+    if variant is None:
+        variant = get_variant_or_fail(variant_id, crs)
 
     assignment_raw = db.get_assignment_by_id(
-        position_id,
+        variant_id,
         assignment_id,
-        position.num_buckets,
+        variant.num_buckets,
         crs,
     )
 
     if assignment_raw is None:
         raise RuntimeError(
             f"Tried to fetch an assignment with ID "
-            f"{position_id}/{assignment_id}, but it "
+            f"{variant_id}/{assignment_id}, but it "
             "seems to not exist!",
         )
 
-    return game_position.Assignment(position, assignment_raw)
+    return game_variant.Assignment(variant, assignment_raw)

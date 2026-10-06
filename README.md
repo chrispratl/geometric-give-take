@@ -13,7 +13,7 @@ Helper program for exploring the geometric Give and Take game as discussed in my
 
 - Find assignments whose winner is unknown
   ```sql
-  select * from positions_3
+  select * from variants_3
       where winner = 'bob  ' -- Note: Two spaces are on purpose here!
       and ((metadata ->> 'bob-win') != 'simple-win')
       and ((metadata ->> 'bob-win') != '1-2-buckets')

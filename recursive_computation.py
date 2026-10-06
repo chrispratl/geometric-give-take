@@ -5,11 +5,12 @@ Full recursive computation implementation.
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
+from tqdm import tqdm
+
 import db
 import decision_algorithms
-import game_position
+import game_variant
 import tools
-from tqdm import tqdm
 
 RECURSION_MAX_DEPTH = 3
 
@@ -17,19 +18,19 @@ RECURSION_MAX_DEPTH = 3
 @dataclass
 class Trace:
     type: str
-    bob_move: game_position.BobMove | None
+    bob_move: game_variant.BobMove | None
 
 
 def find_winner_in_db(
-    position_id: int,
-    assignment: game_position.Assignment,
+    variant_id: int,
+    assignment: game_variant.Assignment,
     crs: db.cursor,
-) -> None | game_position.KnownWinner:
+) -> None | game_variant.KnownWinner:
     """
     Check if a winner is known in the database
     """
 
-    metadata = db.get_assignment_metadata_by_buckets(position_id, assignment, crs)
+    metadata = db.get_assignment_metadata_by_buckets(variant_id, assignment, crs)
 
     if metadata is None:
         return None
@@ -37,13 +38,13 @@ def find_winner_in_db(
     winner_raw = metadata[1]
     if winner_raw is None:
         return None
-    return game_position.KnownWinner(winner_raw.strip())
+    return game_variant.KnownWinner(winner_raw.strip())
 
 
 class RecursiveComputer:
     """
     Arguments:
-    * `position_id`: Required, defines the position ID
+    * `variant_id`: Required, defines the variant ID
       that will be worked on
     * `assignment_id` or `assignment`: One of the two has to
       be set, defines the assignment to work on.
@@ -55,10 +56,10 @@ class RecursiveComputer:
 
     def __init__(  # noqa: PLR0913
         self,
-        position_id: int,
+        variant_id: int,
         *,
         assignment_id: int | None = None,
-        assignment: game_position.Assignment | None = None,
+        assignment: game_variant.Assignment | None = None,
         max_depth: int = RECURSION_MAX_DEPTH,
         crs: db.cursor | None = None,
         interactive: bool = True,
@@ -67,19 +68,19 @@ class RecursiveComputer:
         self.max_depth = max_depth
         self.crs = crs or db.get_connection()
 
-        self.position_id = position_id
-        self.position = db.get_game_position(self.position_id, crs)
-        if self.position is None:
-            raise RuntimeError(f"Game position with ID {self.position_id} not found!")
+        self.variant_id = variant_id
+        self.variant = db.get_game_variant(self.variant_id, crs)
+        if self.variant is None:
+            raise RuntimeError(f"Game variant with ID {self.variant_id} not found!")
 
         ################################
-        # Fetch game position metadata #
+        # Fetch game variant metadata #
         ################################
 
-        self.equivalent_positions = db.metadata_get_equivalent_positions(self.position_id, self.crs)
-        if self.equivalent_positions is None:
+        self.equivalent_variants = db.metadata_get_equivalent_variants(self.variant_id, self.crs)
+        if self.equivalent_variants is None:
             raise RuntimeError(
-                f"Unable to fetch equivalent positions for position {self.position_id}!",
+                f"Unable to fetch equivalent variants for variant {self.variant_id}!",
             )
 
         #########################
@@ -89,17 +90,17 @@ class RecursiveComputer:
             self.base_assignment = assignment
         elif assignment_id is not None:
             assignment_data_raw = db.get_assignment_by_id(
-                self.position_id,
+                self.variant_id,
                 assignment_id,
-                self.position.num_buckets,
+                self.variant.num_buckets,
                 self.crs,
             )
 
             if assignment_data_raw is None:
-                raise RuntimeError(f"Assignment {self.position_id}/{assignment_id} not found!")
+                raise RuntimeError(f"Assignment {self.variant_id}/{assignment_id} not found!")
 
-            self.base_assignment = game_position.Assignment(
-                game_position=self.position,
+            self.base_assignment = game_variant.Assignment(
+                game_variant=self.variant,
                 bucket_content=list(assignment_data_raw),
             )
         else:
@@ -109,12 +110,12 @@ class RecursiveComputer:
         # Setup variables used in computation #
         #######################################
         self.computed_children: dict[
-            game_position.Assignment,
-            dict[game_position.BobMove, tuple[game_position.Assignment, game_position.Assignment]],
+            game_variant.Assignment,
+            dict[game_variant.BobMove, tuple[game_variant.Assignment, game_variant.Assignment]],
         ] = {}
-        self.known_winners: dict[game_position.Assignment, decision_algorithms.KnownWinner] = {}
-        self.layer_children: dict[int, list[game_position.Assignment]] = {}
-        self.trace: dict[game_position.Assignment, Trace] = {}
+        self.known_winners: dict[game_variant.Assignment, decision_algorithms.KnownWinner] = {}
+        self.layer_children: dict[int, list[game_variant.Assignment]] = {}
+        self.trace: dict[game_variant.Assignment, Trace] = {}
 
         self.interactive = interactive
 
@@ -131,7 +132,7 @@ class RecursiveComputer:
 
     def compute(self) -> None | decision_algorithms.KnownWinner:
         """
-        Try to find winner for a position by
+        Try to find winner for a variant by
         doing recursive computations.
         """
 
@@ -162,12 +163,12 @@ class RecursiveComputer:
 
         return None
 
-    def generate_children(self, assignment: game_position.Assignment) -> None:
+    def generate_children(self, assignment: game_variant.Assignment) -> None:
         """
         Compute all children for an assignment,
         and store them.
         Also, check if we know the winners for
-        the positions, and add them to the correct
+        the variants, and add them to the correct
         dict, if so.
         Also add the children to the next child layer.
         """
@@ -175,7 +176,7 @@ class RecursiveComputer:
         ret = self.computed_children.get(assignment, {})
 
         for move in assignment.bob_moves:
-            ret[move] = tools.compute_alice_moves(assignment, move, self.equivalent_positions)
+            ret[move] = tools.compute_alice_moves(assignment, move, self.equivalent_variants)
 
             for child_pos in ret[move]:
                 if child_pos in self.known_winners:
@@ -187,7 +188,7 @@ class RecursiveComputer:
                     continue
 
                 winner = find_winner_in_db(
-                    self.position_id,
+                    self.variant_id,
                     child_pos,
                     self.crs,
                 )
